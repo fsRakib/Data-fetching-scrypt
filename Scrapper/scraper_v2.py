@@ -58,8 +58,8 @@ else:
 
         # create separate rows for each questionType
         for qtype, msgs in qtype_groups.items():
-            user_msgs = []
-            assistant_msgs = []
+            first_user_msg = None
+            first_assistant_msg = None
 
             for msg in msgs:
                 role = msg.get("role")
@@ -67,20 +67,24 @@ else:
                 code = msg.get("codeContent", "")
                 combined = f"{code}\n{content}" if code else content
 
-                if role == "user":
-                    user_msgs.append(combined)
-                elif role == "assistant":
-                    assistant_msgs.append(combined)
+                if role == "user" and first_user_msg is None:
+                    first_user_msg = combined
+                elif role == "assistant" and first_assistant_msg is None:
+                    first_assistant_msg = combined
 
-            # skip empty groups
-            if len(msgs) == 0:
+                # stop if we have both
+                if first_user_msg and first_assistant_msg:
+                    break
+
+            # skip if no valid messages found
+            if not first_user_msg and not first_assistant_msg:
                 continue
 
             rows.append({
                 "session_id": session_id,
                 "question_type": qtype,
-                "user_messages": "---SEPARATOR-@@@---".join(user_msgs),
-                "assistant_messages": "---SEPARATOR-@@@---".join(assistant_msgs),
+                "user_messages": first_user_msg or "",
+                "assistant_messages": first_assistant_msg or "",
             })
 
     # convert to DataFrame
@@ -91,9 +95,9 @@ else:
     else:
         # 4️⃣ Save to Excel
         try:
-            df.to_excel("sessions_by_question_type.xlsx", index=False)
-            print(f"✅ Exported {len(df)} rows to sessions_by_question_type.xlsx")
+            df.to_excel("data.xlsx", index=False)
+            print(f"✅ Exported {len(df)} rows to data.xlsx")
         except PermissionError:
-            fallback = f"sessions_by_question_type_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+            fallback = f"data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
             df.to_excel(fallback, index=False)
-            print(f"⚠️ sessions_by_question_type.xlsx locked. Exported to {fallback} instead.")
+            print(f"⚠️ data.xlsx locked. Exported to {fallback} instead.")
