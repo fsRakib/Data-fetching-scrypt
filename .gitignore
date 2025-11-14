@@ -1,3 +1,5 @@
 /.venv
 /session-model.ts
 /sessions_data.xlsx
+.env
+*.env
