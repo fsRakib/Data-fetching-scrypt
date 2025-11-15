@@ -4,6 +4,8 @@ import os
 from typing import List, Literal
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
+from pymongo import MongoClient
+from datetime import datetime
 
 # Load environment variables from .env file
 load_dotenv()
@@ -12,6 +14,10 @@ SEPARATOR = "---SEPARATOR-@@@---"
 
 # Initialize OpenAI client with API key from environment variable
 client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+
+# Initialize MongoDB client
+MONGODB_URI = os.environ.get("MONGODB_URI")
+mongo_client = MongoClient(MONGODB_URI)
 
 
 def get_cot_prompt(question_type: str) -> str:
@@ -169,34 +175,138 @@ async def get_response(user_input: str, question_type: str) -> str:
 # ==============================
 # ⚙️ Configuration
 # ==============================
-INPUT_FILE = r"d:\Data fetching scrypt\data(5).xlsx"
-OUTPUT_FILE = r"d:\Data fetching scrypt\data\system_B_response.xlsx"
+# MongoDB Configuration
+DB_NAME = "Eeffective_Learning_db"
+COLLECTION_NAME = "sessions"
+
+# Output file
+OUTPUT_FILE = r"d:\Data fetching scrypt\data\system_B_response_from_db.xlsx"
 
 # Model to use for all requests
 MODEL = "gpt-4o"
 
 
 # ==============================
+# 📊 MongoDB Data Fetching
+# ==============================
+def fetch_sessions_from_mongodb():
+    """
+    Fetch all sessions from MongoDB and extract first user and assistant messages.
+    
+    Returns:
+        List of dictionaries with session_id, question_type, user_messages, assistant_messages
+    """
+    print(f"Connecting to MongoDB database: {DB_NAME}")
+    db = mongo_client[DB_NAME]
+    collection = db[COLLECTION_NAME]
+    
+    # Fetch all sessions
+    sessions = list(collection.find({}))
+    print(f"Found {len(sessions)} sessions in database")
+    
+    processed_data = []
+    skipped_count = 0
+    
+    for session in sessions:
+        try:
+            session_id = session.get('sessionId', str(session.get('_id')))
+            messages = session.get('messages', [])
+            
+            # Skip if no messages
+            if not messages or len(messages) < 2:
+                skipped_count += 1
+                continue
+            
+            # Find first user message and first assistant message
+            first_user_msg = None
+            first_assistant_msg = None
+            question_type = None
+            
+            for msg in messages:
+                role = msg.get('role')
+                
+                # Get first user message
+                if role == 'user' and first_user_msg is None:
+                    first_user_msg = msg.get('content', '')
+                    question_type = msg.get('questionType', 'GeneralQuestion')
+                
+                # Get first assistant message
+                if role == 'assistant' and first_assistant_msg is None:
+                    first_assistant_msg = msg.get('content', '')
+                
+                # Stop if we have both
+                if first_user_msg and first_assistant_msg:
+                    break
+            
+            # Only add if we have both user and assistant messages
+            if first_user_msg and first_assistant_msg:
+                processed_data.append({
+                    'session_id': session_id,
+                    'question_type': question_type,
+                    'user_messages': first_user_msg,
+                    'assistant_messages': first_assistant_msg
+                })
+            else:
+                skipped_count += 1
+                
+        except Exception as e:
+            print(f"  ⚠ Error processing session {session.get('_id')}: {e}")
+            skipped_count += 1
+            continue
+    
+    print(f"✓ Processed {len(processed_data)} valid sessions")
+    if skipped_count > 0:
+        print(f"⚠ Skipped {skipped_count} sessions (incomplete data)")
+    
+    return processed_data
+
+
+# ==============================
 # 🚀 Main processing function
 # ==============================
 async def main():
-    # STEP 1: Load data
-    print(f"Loading data from {INPUT_FILE} ...")
-    df = pd.read_excel(INPUT_FILE)
-    print(f"Loaded {len(df)} rows.")
+    # STEP 1: Fetch data from MongoDB
+    print("=" * 60)
+    print("STEP 1: Fetching data from MongoDB")
+    print("=" * 60)
+    
+    try:
+        sessions_data = fetch_sessions_from_mongodb()
+        
+        if not sessions_data:
+            print("❌ No valid sessions found in database. Exiting.")
+            return
+        
+        # Convert to DataFrame
+        df = pd.DataFrame(sessions_data)
+        print(f"\n📊 Loaded {len(df)} sessions from database")
+        
+        # Show question type distribution
+        print("\n📝 Question Type Distribution:")
+        for qtype, count in df['question_type'].value_counts().items():
+            print(f"   - {qtype}: {count}")
+        
+    except Exception as e:
+        print(f"❌ Error fetching data from MongoDB: {e}")
+        return
 
     # STEP 2: Prepare data
+    print(f"\n{'=' * 60}")
+    print("STEP 2: Processing with GPT-4o and COT prompts")
+    print("=" * 60)
+    
     rows = df.to_dict(orient="records")
     results = []
     
-    print(f"\nProcessing {len(rows)} sessions with GPT-4o and COT prompts (serially)...")
+    print(f"\nProcessing {len(rows)} sessions serially...")
     
     # STEP 3: Process each row serially (one at a time)
     for i, row in enumerate(rows, 1):
         user_input = row["user_messages"]
         question_type = row["question_type"]
         
-        print(f"  [{i}/{len(rows)}] Processing question type: {question_type}...")
+        print(f"\n  [{i}/{len(rows)}] Session: {row['session_id'][:20]}...")
+        print(f"           Question Type: {question_type}")
         
         # Get response for this row
         response = await get_response(user_input, question_type)
@@ -206,15 +316,28 @@ async def main():
         row["gpt-4o_COT"] = response
         
         # Show preview of response
-        preview = response[:100].replace('\n', ' ') if len(response) > 100 else response.replace('\n', ' ')
-        print(f"      ✓ Got response: {preview}...")
+        preview = response[:80].replace('\n', ' ') if len(response) > 80 else response.replace('\n', ' ')
+        print(f"           ✓ Response: {preview}...")
 
-    print(f"\n✅ Completed {len(rows)} responses for GPT-4o with COT prompts")
+    print(f"\n{'=' * 60}")
+    print(f"✅ Completed {len(rows)} responses for GPT-4o with COT prompts")
+    print("=" * 60)
 
     # STEP 4: Save results
+    print(f"\nSTEP 3: Saving results to Excel")
     df_output = pd.DataFrame(rows)
     df_output.to_excel(OUTPUT_FILE, index=False)
-    print(f"\n🎉 All responses saved to {OUTPUT_FILE}")
+    print(f"🎉 All responses saved to: {OUTPUT_FILE}")
+    
+    # Show summary
+    print(f"\n📋 Output Summary:")
+    print(f"   - Total sessions processed: {len(df_output)}")
+    print(f"   - Columns: {', '.join(df_output.columns.tolist())}")
+    print(f"   - File size: {os.path.getsize(OUTPUT_FILE):,} bytes")
+    
+    # Close MongoDB connection
+    mongo_client.close()
+    print(f"\n✓ MongoDB connection closed")
 
 
 # ==============================
