@@ -82,6 +82,12 @@ export async function GET(request: NextRequest) {
 
         if (!userMessage || !assistantMessage) continue;
 
+        // Combine user message with code content for consistent display
+        let combinedUserMessage = userMessage.content;
+        if (userMessage.codeContent) {
+          combinedUserMessage = `${userMessage.content}\n\n[Code]:\n${userMessage.codeContent}`;
+        }
+
         // Create dummy System B response (slightly modified version)
         const dummySystemBResponse = `[DUMMY SYSTEM B RESPONSE FOR TESTING]
 
@@ -102,7 +108,7 @@ Note: This is a dummy response for UI testing. The actual System B response woul
             sessionId: sessionDoc.sessionId,
             messageIndex: 0,
             userMessage: {
-              content: userMessage.content,
+              content: combinedUserMessage, // Combined message + code
               codeContent: userMessage.codeContent,
               codeLanguage: userMessage.codeLanguage,
             },
@@ -198,9 +204,9 @@ Note: This is a dummy response for UI testing. The actual System B response woul
           sessionId: systemBResp.sessionId,
           messageIndex: systemBResp.messageIndex,
           userMessage: {
-            content: userMessage.content,
-            codeContent: userMessage.codeContent,
-            codeLanguage: userMessage.codeLanguage,
+            content: systemBResp.userMessage, // Combined message + code from System B
+            codeContent: systemBResp.codeContent,
+            codeLanguage: systemBResp.codeLanguage,
           },
           leftSystem,
           rightSystem,

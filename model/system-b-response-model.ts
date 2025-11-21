@@ -8,6 +8,7 @@ export interface ISystemBResponse extends Document {
   questionType?: string;
   codeContent?: string;
   codeLanguage?: string;
+  codeOutputPreference?: string;
   createdAt: Date;
 }
 
@@ -20,6 +21,7 @@ const systemBResponseSchema = new Schema<ISystemBResponse>(
     questionType: { type: String },
     codeContent: { type: String },
     codeLanguage: { type: String },
+    codeOutputPreference: { type: String },
   },
   {
     timestamps: true,
